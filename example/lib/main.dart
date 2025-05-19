@@ -221,16 +221,12 @@ class _HomePageState extends State<HomePage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: <Widget>[
-                _button(
-                    "Popular",
-                    Icons.favorite,
-                    Colors.blue,
-                    () => {
-                          panelController.forseScrollChange(
-                              scrollController.animateTo(100,
-                                  duration: Duration(milliseconds: 400),
-                                  curve: Curves.ease))
-                        }),
+                _button("Popular", Icons.favorite, Colors.blue, () {
+                  panelController.forseScrollChange(scrollController.animateTo(
+                      100,
+                      duration: Duration(milliseconds: 400),
+                      curve: Curves.ease));
+                }),
                 _button("Food", Icons.restaurant, Colors.red, () => {}),
                 _button("Events", Icons.event, Colors.amber, () => {}),
                 _button("More", Icons.more_horiz, Colors.green, () => {}),
