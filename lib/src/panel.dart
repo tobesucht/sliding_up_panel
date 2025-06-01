@@ -595,8 +595,9 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
     double d2Snap = ((widget.snapPoint ?? 3) - _ac.value)
         .abs(); // large value if null results in not every being the min
     double minDistance = min(d2Close, min(d2Snap, d2Open));
-    // check if velocity is sufficient for a fling
-    if (v.pixelsPerSecond.dy.abs() >= minFlingVelocity) {
+
+    // check if velocity is sufficient for a fling and if fling is enabled
+    if (widget.enableFling && v.pixelsPerSecond.dy.abs() >= minFlingVelocity) {
       // snapPoint exists
       if (widget.panelSnapping && widget.snapPoint != null) {
         if (v.pixelsPerSecond.dy.abs() >= kSnap * minFlingVelocity ||
@@ -663,20 +664,23 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
 
   //hide the panel (completely offscreen)
   Future<void> _hide() {
-    return _ac.fling(velocity: -1.0).then((x) {
+    // First animate to closed position, then set invisible
+    return _ac.animateTo(0.0).then((x) {
       setState(() {
         _isPanelVisible = false;
       });
     });
   }
 
-  //show the panel (in collapsed mode)
+  //show the panel (in collapsed mode or snap point)
   Future<void> _show() {
-    return _ac.fling(velocity: -1.0).then((x) {
-      setState(() {
-        _isPanelVisible = true;
-      });
+    setState(() {
+      _isPanelVisible = true;
     });
+
+    // If snapPoint exists, animate to it; otherwise, animate to collapsed position (0.0)
+    double targetPosition = widget.snapPoint ?? 0.0;
+    return _ac.animateTo(targetPosition);
   }
 
   //animate the panel position to value - must
