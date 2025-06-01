@@ -228,7 +228,6 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
   @override
   void initState() {
     super.initState();
-    var actualPanelState = widget.defaultPanelState;
     _ac = new AnimationController(
         vsync: this,
         duration: const Duration(milliseconds: 300),
@@ -236,28 +235,19 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
             ? 0.0
             : 1.0 //set the default panel state (i.e. set initial value of _ac)
         )
-      ..addStatusListener((status) {
+      ..addListener(() {
         if (widget.onPanelSlide != null) widget.onPanelSlide!(_ac.value);
-
+      })
+      ..addStatusListener((status) {
         if (widget.onPanelOpened != null &&
             _ac.value == 1.0 &&
-            actualPanelState == PanelState.CLOSED &&
             status == AnimationStatus.completed) {
-          setState(() {});
-
-          actualPanelState = PanelState.OPEN;
           widget.onPanelOpened!();
         }
 
         if (widget.onPanelClosed != null &&
             _ac.value == 0.0 &&
-            actualPanelState == PanelState.OPEN &&
             status == AnimationStatus.dismissed) {
-          if (widget.collapsed != null) {
-            setState(() {});
-          }
-
-          actualPanelState = PanelState.CLOSED;
           widget.onPanelClosed!();
         }
       });
@@ -278,6 +268,14 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
 
   @override
   Widget build(BuildContext context) {
+    // Cache MediaQuery for performance
+    final screenSize = MediaQuery.of(context).size;
+    final screenHeight = screenSize.height;
+    final panelWidth = widget.width ?? screenSize.width;
+    final effectiveMargin = widget.margin?.horizontal ?? 0;
+    final effectivePadding = widget.padding?.horizontal ?? 0;
+    final contentWidth = panelWidth - effectiveMargin - effectivePadding;
+
     return Stack(
       alignment: widget.slideDirection == SlideDirection.UP
           ? Alignment.bottomCenter
@@ -285,14 +283,34 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
       children: <Widget>[
         //make the back widget take up the entire back side
         widget.body != null
-            ? Container(
-                height: MediaQuery.of(context).size.height,
-                width: widget.width ?? MediaQuery.of(context).size.width,
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: widget.minHeight),
-                  child: widget.body,
-                ),
-              )
+            ? widget.parallaxEnabled
+                ? AnimatedBuilder(
+                    animation: _ac,
+                    builder: (context, child) {
+                      return Positioned(
+                        top: widget.slideDirection == SlideDirection.UP
+                            ? _getParallax()
+                            : 0.0,
+                        bottom: widget.slideDirection == SlideDirection.DOWN
+                            ? _getParallax()
+                            : 0.0,
+                        child: child!,
+                      );
+                    },
+                    child: Container(
+                      height: screenHeight,
+                      width: panelWidth,
+                      child: widget.body,
+                    ),
+                  )
+                : Container(
+                    height: screenHeight,
+                    width: panelWidth,
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: widget.minHeight),
+                      child: widget.body,
+                    ),
+                  )
             : Container(),
 
         //the backdrop to overlay on the body
@@ -314,9 +332,8 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                     animation: _ac,
                     builder: (context, _) {
                       return Container(
-                        height: MediaQuery.of(context).size.height,
-                        width:
-                            widget.width ?? MediaQuery.of(context).size.width,
+                        height: screenHeight,
+                        width: panelWidth,
 
                         //set color to null so that touch events pass through
                         //to the body when the panel is closed, otherwise,
@@ -363,14 +380,7 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                           bottom: widget.slideDirection == SlideDirection.DOWN
                               ? 0.0
                               : null,
-                          width: widget.width ??
-                              MediaQuery.of(context).size.width -
-                                  (widget.margin != null
-                                      ? widget.margin!.horizontal
-                                      : 0) -
-                                  (widget.padding != null
-                                      ? widget.padding!.horizontal
-                                      : 0),
+                          width: contentWidth,
                           child: Container(
                             height: widget.maxHeight,
                             child: widget.panelBuilder!(),
@@ -411,14 +421,7 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                         bottom: widget.slideDirection == SlideDirection.DOWN
                             ? 0.0
                             : null,
-                        width: widget.width ??
-                            MediaQuery.of(context).size.width -
-                                (widget.margin != null
-                                    ? widget.margin!.horizontal
-                                    : 0) -
-                                (widget.padding != null
-                                    ? widget.padding!.horizontal
-                                    : 0),
+                        width: contentWidth,
                         child: Container(
                           height: widget.minHeight,
                           child: widget.collapsed == null
@@ -446,10 +449,14 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
   @override
   void dispose() {
     _ac.dispose();
+    // Fix memory leak: dispose ScrollController if we created it
+    if (widget.scrollController == null) {
+      _sc.dispose();
+    }
     super.dispose();
   }
 
-  /* double _getParallax() {
+  double _getParallax() {
     if (widget.slideDirection == SlideDirection.UP)
       return -_ac.value *
           (widget.maxHeight - widget.minHeight) *
@@ -458,7 +465,7 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
       return _ac.value *
           (widget.maxHeight - widget.minHeight) *
           widget.parallaxOffset;
-  } */
+  }
 
   bool _ignoreScrollable = false;
   bool _isHorizontalScrollableWidget = false;
@@ -473,36 +480,39 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
 
     return Listener(
       onPointerDown: (PointerDownEvent e) {
-        var rb = context.findRenderObject() as RenderBox;
-        var result = BoxHitTestResult();
+        // Cache render box to avoid repeated lookups
+        final rb = context.findRenderObject() as RenderBox?;
+        if (rb == null) return;
+
+        final result = BoxHitTestResult();
         rb.hitTest(result, position: e.position);
 
         if (_panelPosition == 1) {
           _scMinffset = 0.0;
         }
-        // if there any widget in the path that must force graggable,
-        // stop it right here
-        if (result.path.any((entry) =>
-            entry.target.runtimeType == _ForceDraggableWidgetRenderBox)) {
-          widget.controller?._nowTargetForceDraggable = true;
-          _scMinffset = _sc.offset;
-          _isHorizontalScrollableWidget = false;
-        } else if (result.path.any((entry) =>
-            entry.target.runtimeType == _HorizontalScrollableWidgetRenderBox)) {
-          _isHorizontalScrollableWidget = true;
-          widget.controller?._nowTargetForceDraggable = false;
-        } else if (result.path.any((entry) =>
-            entry.target.runtimeType ==
-            _IgnoreDraggableWidgetWidgetRenderBox)) {
-          _ignoreScrollable = true;
-          widget.controller?._nowTargetForceDraggable = false;
-          _isHorizontalScrollableWidget = false;
-          return;
-        } else {
-          widget.controller?._nowTargetForceDraggable = false;
-          _isHorizontalScrollableWidget = false;
-        }
+
+        // Reset state first
+        widget.controller?._nowTargetForceDraggable = false;
+        _isHorizontalScrollableWidget = false;
         _ignoreScrollable = false;
+
+        // Check for special render boxes in hit test path
+        for (final entry in result.path) {
+          final targetType = entry.target.runtimeType;
+
+          if (targetType == _ForceDraggableWidgetRenderBox) {
+            widget.controller?._nowTargetForceDraggable = true;
+            _scMinffset = _sc.offset;
+            break;
+          } else if (targetType == _HorizontalScrollableWidgetRenderBox) {
+            _isHorizontalScrollableWidget = true;
+            break;
+          } else if (targetType == _IgnoreDraggableWidgetWidgetRenderBox) {
+            _ignoreScrollable = true;
+            return;
+          }
+        }
+
         _vt.addPosition(e.timeStamp, e.position);
       },
       onPointerMove: (PointerMoveEvent e) {
@@ -555,13 +565,12 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
     // whether to enable scrolling if the user swipes up, or disable closing and
     // begin to close the panel if the user swipes down
     if (_isPanelOpen && _sc.hasClients && _sc.offset <= _scMinffset) {
-      setState(() {
-        if (dy < 0) {
-          _scrollingEnabled = true;
-        } else {
-          _scrollingEnabled = false;
-        }
-      });
+      final newScrollingEnabled = dy < 0;
+      if (_scrollingEnabled != newScrollingEnabled) {
+        _scrollingEnabled = newScrollingEnabled;
+        // Only call setState if scrolling state actually changed
+        setState(() {});
+      }
     }
   }
 
