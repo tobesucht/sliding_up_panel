@@ -57,7 +57,12 @@ class SlidingUpPanel extends StatefulWidget {
   /// The height of the sliding panel when fully open.
   final double maxHeight;
 
-  /// Optional width of the sliding panel, default will be screen width.
+  /// Optional width of the panel's CONTENT layers (the `panelBuilder` and
+  /// `collapsed` widgets, the `body` and the backdrop); default is the
+  /// screen width. The sheet itself — colour, border radius, shadow — always
+  /// fills the box the panel is laid out in, and the `header` and `footer`
+  /// always span the sheet (issue #2). A narrower `width` therefore gives a
+  /// full-width sheet with the content inset on the right (start-aligned).
   final double? width;
 
   /// A point between [minHeight] and [maxHeight] that the panel snaps to
@@ -392,9 +397,13 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                             child: widget.panelBuilder!(),
                           )),
 
-                      // footer
+                      // footer — spans the sheet, whatever width the app
+                      // hands it (issue #2): the sheet fills the box, `width`
+                      // narrows the content layers only.
                       widget.footer != null
                           ? Positioned(
+                              left: 0.0,
+                              right: 0.0,
                               top: widget.slideDirection == SlideDirection.UP
                                   ? null
                                   : 0.0,
@@ -405,9 +414,11 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                               child: widget.footer ?? SizedBox())
                           : Container(),
 
-                      // header
+                      // header — spans the sheet, see the footer.
                       widget.header != null
                           ? Positioned(
+                              left: 0.0,
+                              right: 0.0,
                               top: widget.slideDirection == SlideDirection.UP
                                   ? 0.0
                                   : null,
