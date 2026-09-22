@@ -57,7 +57,12 @@ class SlidingUpPanel extends StatefulWidget {
   /// The height of the sliding panel when fully open.
   final double maxHeight;
 
-  /// Optional width of the sliding panel, default will be screen width.
+  /// Optional width of the panel's CONTENT layers (the `panelBuilder` and
+  /// `collapsed` widgets, the `body` and the backdrop); default is the
+  /// screen width. The sheet itself — colour, border radius, shadow — always
+  /// fills the box the panel is laid out in, and the `header` and `footer`
+  /// always span the sheet (issue #2). A narrower `width` therefore gives a
+  /// full-width sheet with the content inset on the right (start-aligned).
   final double? width;
 
   /// A point between [minHeight] and [maxHeight] that the panel snaps to
@@ -256,8 +261,14 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
     // draggable and panel scrolling is enabled
     _sc = widget.scrollController ?? ScrollController();
     _sc.addListener(() {
+      // While a gesture over a HorizontalScrollableWidget is still undecided
+      // (see _axisProbe) the content may move a few pixels; snapping it back
+      // here would end its drag for good. Wait for the verdict.
+      final axisUndecided =
+          _isHorizontalScrollableWidget && _scrollableAxis == null;
       if (widget.isDraggable &&
           !widget.disableDraggableOnScrolling &&
+          !axisUndecided &&
           (!_scrollingEnabled || _panelPosition < 1) &&
           widget.controller?._forceScrollChange != true)
         _sc.jumpTo(_scMinffset);
@@ -386,9 +397,13 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                             child: widget.panelBuilder!(),
                           )),
 
-                      // footer
+                      // footer — spans the sheet, whatever width the app
+                      // hands it (issue #2): the sheet fills the box, `width`
+                      // narrows the content layers only.
                       widget.footer != null
                           ? Positioned(
+                              left: 0.0,
+                              right: 0.0,
                               top: widget.slideDirection == SlideDirection.UP
                                   ? null
                                   : 0.0,
@@ -399,9 +414,11 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
                               child: widget.footer ?? SizedBox())
                           : Container(),
 
-                      // header
+                      // header — spans the sheet, see the footer.
                       widget.header != null
                           ? Positioned(
+                              left: 0.0,
+                              right: 0.0,
                               top: widget.slideDirection == SlideDirection.UP
                                   ? 0.0
                                   : null,
@@ -471,6 +488,19 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
   bool _isHorizontalScrollableWidget = false;
   Axis? _scrollableAxis;
 
+  /// Movement accumulated since pointer down while the gesture's axis is
+  /// still undecided. A single pointer delta is a poor verdict — a slow
+  /// vertical swipe often starts with a tiny sideways wobble — so the axis
+  /// is decided once this much movement has been seen.
+  Offset _axisProbe = Offset.zero;
+  static const double _kAxisDecisionDistance = 6.0;
+
+  /// Whether the content sat at its top when the pointer went down. The
+  /// "swipe up scrolls, swipe down closes" rule is applied at the moment the
+  /// axis is decided, by which time the content may already have crept a few
+  /// pixels during the undecided moves.
+  bool _atTopOnDown = true;
+
   // returns a gesture detector if panel is used
   // and a listener if panelBuilder is used.
   // this is because the listener is designed only for use with linking the scrolling of
@@ -495,6 +525,9 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
         widget.controller?._nowTargetForceDraggable = false;
         _isHorizontalScrollableWidget = false;
         _ignoreScrollable = false;
+        _scrollableAxis = null;
+        _axisProbe = Offset.zero;
+        _atTopOnDown = !_sc.hasClients || _sc.offset <= _scMinffset;
 
         // Check for special render boxes in hit test path
         for (final entry in result.path) {
@@ -517,10 +550,34 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
       },
       onPointerMove: (PointerMoveEvent e) {
         if (_scrollableAxis == null) {
-          if (e.delta.dx.abs() > e.delta.dy.abs()) {
-            _scrollableAxis = Axis.horizontal;
+          _axisProbe += e.delta;
+          if (_axisProbe.distance < _kAxisDecisionDistance) {
+            // Undecided. Over a horizontal scrollable the panel holds still
+            // (the movement is banked in _axisProbe); elsewhere it slides as
+            // it always did — the axis only matters for those widgets.
+            if (_isHorizontalScrollableWidget) return;
           } else {
-            _scrollableAxis = Axis.vertical;
+            _scrollableAxis = _axisProbe.dx.abs() > _axisProbe.dy.abs()
+                ? Axis.horizontal
+                : Axis.vertical;
+            if (_isHorizontalScrollableWidget &&
+                _scrollableAxis == Axis.vertical) {
+              // Vertical after all. Apply the open-panel rule from where the
+              // pointer went down (the content may have crept meanwhile):
+              // swipe up scrolls the content, swipe down closes the panel.
+              if (_isPanelOpen && _atTopOnDown) {
+                final enable = _axisProbe.dy < 0;
+                if (_scrollingEnabled != enable) {
+                  _scrollingEnabled = enable;
+                  setState(() {});
+                }
+              }
+              // Release the banked movement in one go so the gesture does not
+              // lag behind the finger.
+              _vt.addPosition(e.timeStamp, e.position);
+              _onGestureSlide(_axisProbe.dy);
+              return;
+            }
           }
         }
 
@@ -537,7 +594,12 @@ class _SlidingUpPanelState extends State<SlidingUpPanel>
       onPointerUp: (PointerUpEvent e) {
         if (_ignoreScrollable) return;
         _scrollableAxis = null;
+        _axisProbe = Offset.zero;
         _onGestureEnd(_vt.getVelocity());
+      },
+      onPointerCancel: (PointerCancelEvent e) {
+        _scrollableAxis = null;
+        _axisProbe = Offset.zero;
       },
       child: child,
     );
